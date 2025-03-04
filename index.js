@@ -1,14 +1,23 @@
 require("dotenv").config();
 const express = require("express");
+const path = require('path');
+
+const session = require('express-session');
+
 const cors = require("cors");
 const { Sequelize, DataTypes } = require("sequelize");
 const app = express();
 app.use(cors()); // ใช้ CORS
 app.use(express.json());
+app.use(session({
+    secret: 'your-secret-key',
+    resave: false,
+    saveUninitialized: true
+}));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));  // ให้ Express ใช้โฟลเดอร์ public สำหรับไฟล์ static
 app.set("view engine", "ejs");
-
+app.set('views', path.join(__dirname, '..', 'ProjectFrontEnd', 'views')); // ปรับที่นี่ให้ชี้ไปที่โฟลเดอร์ views
 const sequelize = new Sequelize({
   dialect: "sqlite",
   storage: "./Database/app.sqlite",
@@ -74,7 +83,6 @@ const Delivery = sequelize.define("Delivery", {
   Delivery_date: DataTypes.DATE,
 });
 
-// กำหนดความสัมพันธ์ของตาราง
 Order.hasMany(OrderDetail, { foreignKey: "OrderDetail_Order_ID" });
 Order.belongsTo(Customer, { foreignKey: "Order_Customer_ID" });
 OrderDetail.belongsTo(Order, { foreignKey: "OrderDetail_Order_ID" });
@@ -101,7 +109,7 @@ sequelize.sync();
 app.get('/', async (req, res) => {
     try {
         const menu = await Product.findAll(); 
-        res.render('index', { menu }); 
+        res.render('index', { menu }); // เปลี่ยนเป็น 'index'
     } catch (error) {
         console.error('Error fetching menu:', error);
         res.status(500).send('Error fetching menu');
@@ -203,7 +211,6 @@ app.post("/cart/update", async (req, res) => {
             await orderDetail.save();
         }
 
-        // อัปเดตราคาสุทธิของ Order
         const total = await OrderDetail.sum("OrderDetail_Total_Price", { where: { OrderDetail_Order_ID: order.Order_ID } });
         order.Order_Total_Price = total || 0;
         await order.save();
@@ -257,31 +264,50 @@ app.post("/cart/reset", async (req, res) => {
 });
 
 // หน้าชำระเงิน
-app.get("/checkout/:customerId", async (req, res) => {
-  try {
-      const { customerId } = req.params;
 
-      // ค้นหา Order ที่ยังไม่มีการชำระ
-      let order = await Order.findOne({
-          where: { Order_Customer_ID: customerId },
-          include: [{ model: OrderDetail, include: [Product] }]
-      });
-
-      // ถ้าไม่มี Order ให้สร้างใหม่
-      if (!order) {
-          order = await Order.create({
-              Order_Customer_ID: customerId,
-              Order_Datetime: new Date(),
-              Order_Total_Price: 0,
-          });
-      }
-
-      res.render("checkout", { cart: order.OrderDetails, total: order.Order_Total_Price });
-  } catch (error) {
-      console.error("Error fetching checkout:", error);
-      res.status(500).json({ error: "Internal server error" });
-  }
+// Route สำหรับการเข้าสู่ระบบ
+app.post("/login", async (req, res) => {
+    const { phone } = req.body; // ดึงเบอร์โทรศัพท์จาก body
+    try {
+        const user = await Customer.findOne({ where: { Customer_Phonenumber: phone } });
+        if (user) {
+            req.session.user = user; // บันทึกข้อมูล user ลงใน session
+            return res.redirect("/"); // ส่งกลับการรีไดเรกต์ไปที่หน้า index
+        } else {
+            return res.redirect('http://localhost:3000'); // เปลี่ยนเส้นทางไปที่หน้า login
+        }
+    } catch (error) {
+        console.error("Error during login:", error);
+        return res.status(500).json({ error: "Internal Server Error" });
+    }
 });
+
+
+// เส้นทางสำหรับหน้า register (GET)
+app.get('/register', (req, res) => {
+    res.render('register'); // เรนเดอร์ไฟล์ register.ejs
+});
+
+// เส้นทางสำหรับการลงทะเบียน (POST)
+app.post('/register', async (req, res) => {
+    const { name, address, phone } = req.body; // ดึงข้อมูลจากฟอร์ม
+    try {
+        // สร้างผู้ใช้ใหม่ในฐานข้อมูล
+        const newUser  = await Customer.create({
+            Customer_Name: name,
+            Customer_address: address,
+            Customer_Phonenumber: phone
+        });
+        // รีไดเรกต์ไปที่หน้า login หลังจากลงทะเบียนสำเร็จ
+        return res.redirect('http://localhost:3000');
+    } catch (error) {
+        console.error("Error during registration:", error);
+        return res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
+
+
 
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
